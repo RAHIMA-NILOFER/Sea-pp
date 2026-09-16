@@ -52,6 +52,7 @@ try:
         get_available_ports,
     )
     from .database import initialize_database
+    from .database import save_reading, get_history as get_database_history
 except ImportError:
     from simulator import generate_reading
     from anomaly_engine import analyse_reading
@@ -63,6 +64,7 @@ except ImportError:
         get_available_ports,
     )
     from database import initialize_database
+    from database import save_reading, get_history as get_database_history
 
 
 # ============================================================
@@ -647,6 +649,12 @@ def reading(response: Response):
             ),
     }
 
+    if sensor_data.get("data_source") == "SIMULATION":
+        try:
+            save_reading(sensor_data, analysis, {})
+        except Exception:
+            pass
+
     return response
 
 
@@ -975,111 +983,13 @@ def system_information():
         "timestamp":
             time.time(),
     }
-# ============================================================
-# HISTORY / PAST SENSOR DATA
-# ============================================================
-
-HISTORY = [
-    {
-        "timestamp": "2026-08-28 13:28:01",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 42.5,
-        "temperature": 4.8,
-        "magnetic": 57.3,
-        "em": 2.4,
-        "x": 12.0,
-        "y": 8.0,
-        "anomaly": 78.0,
-        "classification": "METAL-RICH"
-    },
-    {
-        "timestamp": "2026-08-28 13:27:58",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 38.2,
-        "temperature": 5.1,
-        "magnetic": 43.7,
-        "em": 1.8,
-        "x": 10.0,
-        "y": 8.0,
-        "anomaly": 61.0,
-        "classification": "POSSIBLE METAL"
-    },
-    {
-        "timestamp": "2026-08-28 13:27:56",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 51.7,
-        "temperature": 4.5,
-        "magnetic": 81.6,
-        "em": 3.7,
-        "x": 8.0,
-        "y": 7.0,
-        "anomaly": 91.0,
-        "classification": "HIGH ANOMALY"
-    },
-    {
-        "timestamp": "2026-08-28 13:27:54",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 35.4,
-        "temperature": 5.4,
-        "magnetic": 31.2,
-        "em": 1.1,
-        "x": 6.0,
-        "y": 7.0,
-        "anomaly": 32.0,
-        "classification": "NORMAL"
-    },
-    {
-        "timestamp": "2026-08-28 13:27:53",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 47.8,
-        "temperature": 4.9,
-        "magnetic": 69.5,
-        "em": 2.9,
-        "x": 5.0,
-        "y": 6.0,
-        "anomaly": 74.0,
-        "classification": "POSSIBLE METAL"
-    },
-    {
-        "timestamp": "2026-08-28 13:27:50",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 29.6,
-        "temperature": 6.2,
-        "magnetic": 24.8,
-        "em": 0.9,
-        "x": 4.0,
-        "y": 5.0,
-        "anomaly": 18.0,
-        "classification": "NORMAL"
-    },
-    {
-        "timestamp": "2026-08-28 13:27:48",
-        "source": "SIMULATION",
-        "status": "DEMO DATA",
-        "depth": 56.3,
-        "temperature": 4.2,
-        "magnetic": 94.1,
-        "em": 4.5,
-        "x": 3.0,
-        "y": 4.0,
-        "anomaly": 96.0,
-        "classification": "METAL-RICH"
-    },
-]
-
-
 @app.get("/api/history")
 def get_history(limit: int = 200):
+    records = get_database_history(limit)
     return {
-        "records": HISTORY[-limit:],
-        "total": len(HISTORY),
-        "source": "SIMULATION"
+        "records": records,
+        "total": len(records),
+        "source": records[-1]["source"] if records else "SIMULATION"
     }
 
 # ============================================================

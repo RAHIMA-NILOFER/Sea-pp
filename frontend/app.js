@@ -11,6 +11,9 @@
 let missionSeconds = 0;
 let scanCount = 0;
 let latestData = null;
+let browserLocation = null;
+let mapLocationKey = null;
+let landCheckKey = null;
 
 
 /* ============================================================
@@ -74,6 +77,174 @@ function formatNumber(value, digits = 2) {
     }
 
     return n.toFixed(digits);
+}
+
+
+function validCoordinate(value) {
+    return Number.isFinite(Number(value)) && Number(value) !== 0;
+}
+
+
+function ensureMapFrame(container) {
+    if (!container) {
+        return null;
+    }
+
+    let frame = container.querySelector(".real-map-frame");
+    if (!frame) {
+        frame = document.createElement("iframe");
+        frame.className = "real-map-frame";
+        frame.title = "Current survey map";
+        frame.loading = "lazy";
+        frame.referrerPolicy = "no-referrer-when-downgrade";
+        frame.style.position = "absolute";
+        frame.style.inset = "0";
+        frame.style.width = "100%";
+        frame.style.height = "100%";
+        frame.style.border = "0";
+        frame.style.zIndex = "0";
+        frame.style.backgroundColor = "#03121b";
+        frame.style.filter = "grayscale(1) brightness(0.3) contrast(1.15)";
+        container.appendChild(frame);
+
+        const tint = document.createElement("div");
+        tint.className = "real-map-tint";
+        tint.style.position = "absolute";
+        tint.style.inset = "0";
+        tint.style.zIndex = "1";
+        tint.style.pointerEvents = "none";
+        tint.style.backgroundColor = "rgba(0, 0, 0, 0.78)";
+        container.appendChild(tint);
+    }
+    return frame;
+}
+
+
+function showRealMap(latitude, longitude, targetLatitude, targetLongitude) {
+    const lat = Number(targetLatitude || latitude);
+    const lon = Number(targetLongitude || longitude);
+    const key = [latitude, longitude, targetLatitude, targetLongitude].map(function(value) {
+        return Number(value).toFixed(5);
+    }).join(",");
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || key === mapLocationKey) {
+        return;
+    }
+
+    mapLocationKey = key;
+    const delta = 0.006;
+    const bbox = [lon - delta, lat - delta, lon + delta, lat + delta].join(",");
+    const source = "https://www.openstreetmap.org/export/embed.html?bbox=" + encodeURIComponent(bbox) + "&layer=mapnik&marker=" + encodeURIComponent(lat + "," + lon);
+
+    document.querySelectorAll(".position-map, .survey-map-large").forEach(function(container) {
+        const frame = ensureMapFrame(container);
+        if (frame) {
+            frame.src = source;
+        }
+    });
+}
+
+
+async function checkLand(latitude, longitude) {
+    const key = Number(latitude).toFixed(4) + "," + Number(longitude).toFixed(4);
+    if (key === landCheckKey) {
+        return;
+    }
+
+    landCheckKey = key;
+    try {
+        const response = await fetch(
+            "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&lat=" +
+            encodeURIComponent(latitude) + "&lon=" + encodeURIComponent(longitude),
+            { headers: { "Accept": "application/json" } }
+        );
+        const place = await response.json();
+        const isLand = Boolean(place.address && (
+            place.address.country ||
+            place.address.state ||
+            place.address.city ||
+            place.address.town ||
+            place.address.village
+        ));
+
+        if (isLand) {
+            setText("nextReason", "Could not find next-best scan: land detected.");
+            setText("informationGain", "—");
+            return;
+        }
+
+        if (latestData && latestData.next_scan && latestData.next_scan.reason) {
+            setText("nextReason", latestData.next_scan.reason);
+        }
+    } catch (error) {
+        console.warn("Map location check unavailable:", error);
+    }
+}
+
+
+function updateRealMap(data) {
+    let latitude = validCoordinate(data.lat) ? Number(data.lat) : null;
+    let longitude = validCoordinate(data.lon) ? Number(data.lon) : null;
+
+    if (latitude === null && browserLocation) {
+        latitude = browserLocation.latitude;
+        longitude = browserLocation.longitude;
+    }
+
+    if (latitude === null && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(position) {
+            browserLocation = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude
+            };
+            updateRealMap(data);
+        }, function() {
+            setText("nextReason", "Waiting for current location...");
+        }, { enableHighAccuracy: true, maximumAge: 60000, timeout: 10000 });
+        return;
+    }
+
+    if (latitude === null || longitude === null) {
+        return;
+    }
+
+    const next = data.next_scan || {};
+    const xStep = Number(next.x) - Number(data.x || 0);
+    const yStep = Number(next.y) - Number(data.y || 0);
+    const targetLatitude = validCoordinate(next.latitude)
+        ? Number(next.latitude)
+        : latitude + (Number.isFinite(yStep) ? yStep : 5) / 111320;
+    const targetLongitude = validCoordinate(next.longitude)
+        ? Number(next.longitude)
+        : longitude + (Number.isFinite(xStep) ? xStep : 5) / (111320 * Math.cos(latitude * Math.PI / 180));
+
+    showRealMap(latitude, longitude, targetLatitude, targetLongitude);
+    checkLand(latitude, longitude);
+}
+
+
+function updateMapPointers(data) {
+    const next = data.next_scan || {};
+
+    function position(value, minimum, maximum) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) {
+            return "50%";
+        }
+        return Math.max(0, Math.min(100, ((number - minimum) / (maximum - minimum)) * 100)) + "%";
+    }
+
+    document.querySelectorAll(".probe-marker").forEach(function(marker) {
+        marker.style.left = position(data.x, 90, 120);
+        marker.style.top = (100 - parseFloat(position(data.y, 15, 60))) + "%";
+        marker.style.transition = "left 0.35s ease, top 0.35s ease";
+    });
+
+    document.querySelectorAll(".next-marker").forEach(function(marker) {
+        marker.style.left = position(next.x, 90, 120);
+        marker.style.top = (100 - parseFloat(position(next.y, 15, 60))) + "%";
+        marker.style.transition = "left 0.35s ease, top 0.35s ease";
+    });
 }
 
 
@@ -258,6 +429,9 @@ function updateTelemetry(data) {
     }
 
     latestData = data;
+
+    updateRealMap(data);
+    updateMapPointers(data);
 
     console.log(
         "ESP32 -> FASTAPI -> FRONTEND",
@@ -748,6 +922,32 @@ async function getHardwareData() {
 }
 
 
+async function fetchHistory() {
+    const response = await fetch("/api/history?limit=200", { cache: "no-store" });
+    if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+    }
+
+    const data = await response.json();
+    const records = data.records || [];
+    const table = $("historyTableBody");
+
+    setText("historyCount", String(data.total ?? records.length));
+    setText("historySource", records.length ? records[records.length - 1].source : "—");
+    setText("historyStatus", records.length ? records[records.length - 1].status : "—");
+
+    if (!table) {
+        return;
+    }
+
+    table.innerHTML = records.length
+        ? records.map(function(record) {
+            return `<tr><td>${record.timestamp || "—"}</td><td>${record.source || "—"}</td><td>${record.status || "—"}</td><td>${formatNumber(record.depth, 2)}</td><td>${formatNumber(record.temperature, 2)}</td><td>${formatNumber(record.magnetic, 2)}</td><td>${formatNumber(record.em, 3)}</td><td>${formatNumber(record.x, 2)}</td><td>${formatNumber(record.y, 2)}</td><td>${formatNumber(record.anomaly, 1)}</td><td>${record.classification || "—"}</td></tr>`;
+        }).join("")
+        : '<tr><td colspan="11" class="history-empty">No historical readings recorded.</td></tr>';
+}
+
+
 /* ============================================================
    MISSION TIMER
 ============================================================ */
@@ -793,7 +993,6 @@ function updateTimer() {
 ============================================================ */
 
 function updateClock() {
-
     const now =
         new Date();
 
@@ -836,6 +1035,21 @@ function updateClock() {
         "systemClock",
         time
     );
+}
+
+
+function navigateToPage(page, activeItem) {
+    document.querySelectorAll(".page[data-page]").forEach(function(section) {
+        section.classList.toggle("active", section.dataset.page === page);
+    });
+
+    document.querySelectorAll(".nav-item[data-page]").forEach(function(item) {
+        item.classList.toggle("active", item === activeItem);
+    });
+
+    if (activeItem) {
+        setText("page-title", activeItem.textContent.trim());
+    }
 }
 
 
@@ -965,17 +1179,23 @@ function initializeDashboard() {
         });
     }
 
-    document.querySelectorAll(".nav-item[data-page]").forEach(function(button) {
-        button.addEventListener("click", function() {
-            const page = button.dataset.page;
-            document.querySelectorAll(".page[data-page]").forEach(function(section) {
-                section.classList.toggle("active", section.dataset.page === page);
-            });
-            document.querySelectorAll(".nav-item[data-page]").forEach(function(item) {
-                item.classList.toggle("active", item === button);
-            });
-            setText("page-title", button.textContent.trim());
-        });
+    const historyButton = $("refresh-history");
+    if (historyButton) {
+        historyButton.addEventListener("click", fetchHistory);
+    }
+    fetchHistory().catch(function(error) {
+        console.error("History error:", error);
+    });
+
+    document.addEventListener("click", function(event) {
+        const button = event.target.closest(".nav-item[data-page]");
+
+        if (!button) {
+            return;
+        }
+
+        event.preventDefault();
+        navigateToPage(button.dataset.page, button);
     });
 }
 

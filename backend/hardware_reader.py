@@ -94,6 +94,10 @@ _reader_running = False
 
 _state_lock = threading.Lock()
 
+_last_connect_attempt = 0.0
+
+_CONNECT_RETRY_INTERVAL = 5.0
+
 
 _state = {
 
@@ -604,6 +608,12 @@ def _reader_loop():
 
             ):
 
+
+                with _state_lock:
+                    _state["connected"] = False
+                    _state["hardware"] = False
+                    _state["fresh_data"] = False
+
                 time.sleep(0.2)
 
                 continue
@@ -849,6 +859,20 @@ def disconnect_hardware():
 # ============================================================
 
 def get_hardware_reading():
+
+    global _last_connect_attempt
+
+    now = time.time()
+
+    with _state_lock:
+        needs_connection = not _state["connected"]
+
+    if (
+        needs_connection
+        and now - _last_connect_attempt >= _CONNECT_RETRY_INTERVAL
+    ):
+        _last_connect_attempt = now
+        connect_hardware()
 
     sensor_info = _get_sensor_status()
 

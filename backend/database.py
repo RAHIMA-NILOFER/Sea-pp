@@ -54,11 +54,21 @@ def initialize_database():
         )
     """)
 
+    columns = {
+        row[1]
+        for row in cursor.execute("PRAGMA table_info(sensor_readings)")
+    }
+    if "confidence" not in columns:
+        cursor.execute(
+            "ALTER TABLE sensor_readings ADD COLUMN confidence REAL"
+        )
+
     conn.commit()
     conn.close()
 
 
 def save_reading(sensor_data, analysis, hardware_status):
+    initialize_database()
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -110,6 +120,33 @@ def save_reading(sensor_data, analysis, hardware_status):
 
     conn.commit()
     conn.close()
+
+
+def get_history(limit=200):
+    initialize_database()
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT
+            timestamp,
+            data_source AS source,
+            CASE hardware_connected
+                WHEN 1 THEN 'REAL HARDWARE'
+                ELSE 'SIMULATION'
+            END AS status,
+            depth,
+            temperature,
+            magnetic,
+            em,
+            x,
+            y,
+            anomaly_score AS anomaly,
+            classification
+        FROM sensor_readings
+        ORDER BY id DESC
+        LIMIT ?
+    """, (max(1, int(limit)),)).fetchall()
+    conn.close()
+    return [dict(row) for row in reversed(rows)]
 
 
 def save_hardware_packet(packet):
