@@ -3936,7 +3936,18 @@
      EXISTING APPLICATION LOGIC
 ========================================================== -->
 
-<script src="/static/app.js?v=5.0.1"></script>
+<script>
+    (function () {
+        const applicationScript = document.createElement("script");
+        applicationScript.src = "/static/app.js?v=5.0.2";
+        applicationScript.onerror = function () {
+            const fallbackScript = document.createElement("script");
+            fallbackScript.src = "app.js?v=5.0.2";
+            document.body.appendChild(fallbackScript);
+        };
+        document.body.appendChild(applicationScript);
+    })();
+</script>
 
 
 <!-- =========================================================
